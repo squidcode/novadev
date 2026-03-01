@@ -229,45 +229,6 @@ NovaDev assumes the following CLI tools are installed and authenticated by the u
 | Auth       | Invite token → JWT exchange                   |
 | Storage    | Local JSON file                               |
 
-## Roadmap
-
-### Phase 1: Auth & Identity
-
-- [x] Token exchange endpoint
-- [x] `novadev auth` command
-- [x] Local credential storage
-- [x] `novadev whoami` command
-
-### Phase 2: Status Reporting
-
-- [x] `novadev status` command
-- [x] Nova receives and displays agent activity
-
-### Phase 3: Task Management
-
-- [x] `novadev tasks` command
-- [x] Task claiming flow
-
-### Phase 4: MCP Integration
-
-- [x] MCP server mode (`novadev mcp`)
-- [x] All CLI commands as MCP tools
-
-### Phase 5: Gateway Mode
-
-- [x] Persistent polling loop
-- [x] Multi-provider support (claude, codex, gemini)
-- [x] Configurable concurrency and polling interval
-- [x] Agent capability announcement
-
-### Phase 6: Streaming & Observability
-
-- [x] Claude streaming output via `spawn` + NDJSON parsing
-- [x] Heartbeats on every poll cycle
-- [x] Session log streaming to Nova
-- [x] Repo cloning from structured task descriptions
-- [x] Structured task instructions (repo, ticket, PR reminder)
-
 ## License
 
 MIT
