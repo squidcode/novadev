@@ -44,7 +44,9 @@
     "node": ">=18"
   },
   "dependencies": {
-    "commander": "^13.1.0"
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "commander": "^13.1.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@eslint/js": "^9.21.0",

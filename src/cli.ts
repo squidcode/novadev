@@ -5,6 +5,7 @@ import { authCommand } from './commands/auth.js';
 import { whoamiCommand } from './commands/whoami.js';
 import { statusCommand } from './commands/status.js';
 import { tasksCommand } from './commands/tasks.js';
+import { startMcpServer } from './mcp.js';
 
 const program = new Command()
   .name('novadev')
@@ -15,5 +16,12 @@ program.addCommand(authCommand);
 program.addCommand(whoamiCommand);
 program.addCommand(statusCommand);
 program.addCommand(tasksCommand);
+
+program
+  .command('mcp')
+  .description('Start as an MCP server (stdio transport)')
+  .action(async () => {
+    await startMcpServer();
+  });
 
 program.parse();

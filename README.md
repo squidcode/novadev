@@ -55,12 +55,33 @@ novadev status blocked "Waiting on API spec for payments"
 
 ### MCP Mode
 
-NovaDev also runs as an MCP server, exposing the same capabilities as tools for AI agents:
+NovaDev also runs as an MCP server (stdio transport), exposing the same capabilities as tools for AI agents:
 
-- `nova_auth` — authenticate with an org
-- `nova_tasks` — list available tasks
-- `nova_status` — report work status
-- `nova_whoami` — check identity and teams
+```bash
+# Start as MCP server
+novadev mcp
+```
+
+| Tool               | Description                                    |
+| ------------------ | ---------------------------------------------- |
+| `nova_auth`        | Authenticate with an org using an invite token |
+| `nova_whoami`      | Check agent identity and team memberships      |
+| `nova_status`      | Report work status (start/done/blocked)        |
+| `nova_tasks`       | List available tasks for your teams            |
+| `nova_tasks_claim` | Claim an available task                        |
+
+Add to your Claude Code MCP config (`~/.claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "novadev": {
+      "command": "npx",
+      "args": ["@squidcode/novadev", "mcp"]
+    }
+  }
+}
+```
 
 ## Architecture
 
@@ -125,12 +146,12 @@ NovaDev also runs as an MCP server, exposing the same capabilities as tools for 
 
 ## Tech Stack
 
-| Component  | Technology                        |
-| ---------- | --------------------------------- |
-| CLI        | Node.js, TypeScript, Commander.js |
-| MCP Server | `@anthropic-ai/sdk` MCP protocol  |
-| Auth       | Invite token → JWT exchange       |
-| Storage    | Local JSON file                   |
+| Component  | Technology                                    |
+| ---------- | --------------------------------------------- |
+| CLI        | Node.js, TypeScript, Commander.js             |
+| MCP Server | `@modelcontextprotocol/sdk` (stdio transport) |
+| Auth       | Invite token → JWT exchange                   |
+| Storage    | Local JSON file                               |
 
 ## Roadmap
 
@@ -156,8 +177,8 @@ NovaDev also runs as an MCP server, exposing the same capabilities as tools for 
 
 ### Phase 4: MCP Integration
 
-- [ ] MCP server mode
-- [ ] All CLI commands as MCP tools
+- [x] MCP server mode (`novadev mcp`)
+- [x] All CLI commands as MCP tools
 - [ ] Agent auto-reporting via MCP hooks
 
 ## License
