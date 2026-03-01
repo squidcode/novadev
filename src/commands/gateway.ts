@@ -1,6 +1,7 @@
 import { Command } from 'commander';
-import { execFile, spawn } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import { existsSync } from 'node:fs';
 import { api, AnnouncePayload, Task } from '../lib/api.js';
 import { getActiveCredential } from '../lib/credentials.js';
 
@@ -68,10 +69,45 @@ export function parseRepo(description: string): string | null {
   return match ? match[1] : null;
 }
 
-/** Clone a repo and return the directory path. Uses `gh repo clone` for auth. */
+/** Reset an existing repo to a clean state on its default branch (remote as source of truth). */
+function resetExistingRepo(dir: string): void {
+  const run = (cmd: string, args: string[]) => execFileSync(cmd, args, { cwd: dir, stdio: 'pipe' });
+
+  // Detect the default branch from the remote HEAD
+  const remoteInfo = run('git', ['remote', 'show', 'origin']).toString();
+  const headMatch = remoteInfo.match(/HEAD branch:\s*(\S+)/);
+  const defaultBranch = headMatch ? headMatch[1] : 'main';
+
+  // Abort any in-progress operations
+  try {
+    run('git', ['merge', '--abort']);
+  } catch {
+    /* no merge in progress */
+  }
+  try {
+    run('git', ['rebase', '--abort']);
+  } catch {
+    /* no rebase in progress */
+  }
+
+  // Discard all local state and switch to the default branch
+  run('git', ['checkout', '--force', defaultBranch]);
+  run('git', ['clean', '-fd']);
+  run('git', ['fetch', 'origin', defaultBranch]);
+  run('git', ['reset', '--hard', `origin/${defaultBranch}`]);
+}
+
+/** Clone a repo (or reset if already cloned) and return the directory path. */
 export function cloneRepo(repo: string, cwd: string): Promise<string> {
   const repoName = repo.split('/').pop()!;
   const dir = `${cwd}/${repoName}`;
+
+  // If already cloned, reset to a fresh state instead of re-cloning
+  if (existsSync(`${dir}/.git`)) {
+    resetExistingRepo(dir);
+    return Promise.resolve(dir);
+  }
+
   return new Promise((resolve, reject) => {
     execFile('gh', ['repo', 'clone', repo, dir, '--', '--depth', '1'], (err) => {
       if (err) reject(new Error(`Failed to clone ${repo}: ${err.message}`));
@@ -189,6 +225,12 @@ export function runClaudeStreaming(
       try {
         const event = JSON.parse(line);
 
+        // Write trimmed text followed by a single newline
+        const writeLn = (text: string) => {
+          const trimmed = text.trim();
+          if (trimmed) process.stdout.write(trimmed + '\n');
+        };
+
         // Extract text content from stream events
         if (event.type === 'assistant') {
           if (event.message?.content) {
@@ -196,17 +238,19 @@ export function runClaudeStreaming(
               if (block.type === 'text') {
                 fullOutput += block.text;
                 lineBuffer.push({ t: Date.now(), text: block.text });
-                process.stdout.write(block.text);
+                writeLn(block.text);
               } else if (block.type === 'tool_use') {
-                const toolLine = `\n[tool] ${block.name}\n`;
-                process.stdout.write(toolLine);
+                const HIDDEN_TOOLS = ['TodoWrite', 'TodoRead'];
+                if (!HIDDEN_TOOLS.includes(block.name)) {
+                  writeLn(`[tool] ${block.name}`);
+                }
               }
             }
           }
         } else if (event.type === 'content_block_delta' && event.delta?.text) {
           fullOutput += event.delta.text;
           lineBuffer.push({ t: Date.now(), text: event.delta.text });
-          process.stdout.write(event.delta.text);
+          writeLn(event.delta.text);
         } else if (event.type === 'result') {
           // Capture the entire result event as-is for server-side extraction
           resultEvent = event;
@@ -280,8 +324,10 @@ export async function processTask(
         try {
           const { mkdirSync } = await import('node:fs');
           mkdirSync(tmpDir, { recursive: true });
+          const repoName = repo.split('/').pop()!;
+          const alreadyCloned = existsSync(`${tmpDir}/${repoName}/.git`);
           cwd = await cloneRepo(repo, tmpDir);
-          log(`${label} Cloned ${repo} → ${cwd}`);
+          log(`${label} ${alreadyCloned ? 'Reset' : 'Cloned'} ${repo} → ${cwd}`);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           log(`${label} Clone failed: ${msg}`);
