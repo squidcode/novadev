@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { execFile, spawn } from 'node:child_process';
+import { ChildProcess, execFile, spawn } from 'node:child_process';
 import { EventEmitter, Readable } from 'node:stream';
 
 vi.mock('node:child_process', () => ({
@@ -55,26 +55,28 @@ const fakeTask: Task = {
 };
 
 function createMockProc() {
-  const proc = new EventEmitter() as ReturnType<typeof spawn>;
   const stdout = new Readable({ read() {} });
   const stderr = new Readable({ read() {} });
-  (proc as any).stdout = stdout;
-  (proc as any).stderr = stderr;
-  (proc as any).stdin = null;
-  (proc as any).stdio = [null, stdout, stderr];
-  (proc as any).pid = 12345;
-  (proc as any).connected = false;
-  (proc as any).exitCode = null;
-  (proc as any).signalCode = null;
-  (proc as any).spawnargs = [];
-  (proc as any).spawnfile = '';
-  (proc as any).killed = false;
-  (proc as any).kill = vi.fn();
-  (proc as any).send = vi.fn();
-  (proc as any).disconnect = vi.fn();
-  (proc as any).unref = vi.fn();
-  (proc as any).ref = vi.fn();
-  (proc as any)[Symbol.dispose] = vi.fn();
+  const emitter = new EventEmitter();
+  const proc = Object.assign(emitter, {
+    stdout,
+    stderr,
+    stdin: null,
+    stdio: [null, stdout, stderr] as const,
+    pid: 12345,
+    connected: false,
+    exitCode: null as number | null,
+    signalCode: null as NodeJS.Signals | null,
+    spawnargs: [] as string[],
+    spawnfile: '',
+    killed: false,
+    kill: vi.fn(),
+    send: vi.fn(),
+    disconnect: vi.fn(),
+    unref: vi.fn(),
+    ref: vi.fn(),
+    [Symbol.dispose]: vi.fn(),
+  }) as unknown as ChildProcess;
   return { proc, stdout, stderr };
 }
 
@@ -130,7 +132,7 @@ describe('parseRepo', () => {
 describe('processTask with claude (streaming)', () => {
   it('claims task, spawns claude, reports done', async () => {
     const { proc, stdout } = createMockProc();
-    mockSpawn.mockReturnValue(proc as any);
+    mockSpawn.mockReturnValue(proc);
 
     const promise = processTask(fakeTask, 'claude', { logging: true });
 
@@ -158,7 +160,7 @@ describe('processTask with claude (streaming)', () => {
 
   it('reports blocked on spawn error', async () => {
     const { proc } = createMockProc();
-    mockSpawn.mockReturnValue(proc as any);
+    mockSpawn.mockReturnValue(proc);
 
     const promise = processTask(fakeTask, 'claude', { logging: true });
 
@@ -171,7 +173,7 @@ describe('processTask with claude (streaming)', () => {
 
   it('sends session logs when logging is enabled', async () => {
     const { proc, stdout } = createMockProc();
-    mockSpawn.mockReturnValue(proc as any);
+    mockSpawn.mockReturnValue(proc);
 
     const promise = processTask(fakeTask, 'claude', { logging: true });
 
@@ -194,7 +196,7 @@ describe('processTask with claude (streaming)', () => {
 
   it('skips session logs when logging is disabled', async () => {
     const { proc, stdout } = createMockProc();
-    mockSpawn.mockReturnValue(proc as any);
+    mockSpawn.mockReturnValue(proc);
 
     const promise = processTask(fakeTask, 'claude', { logging: false });
 
