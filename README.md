@@ -179,7 +179,6 @@ Add to your Claude Code MCP config (`~/.claude/claude_desktop_config.json`):
 
 - [x] MCP server mode (`novadev mcp`)
 - [x] All CLI commands as MCP tools
-- [ ] Agent auto-reporting via MCP hooks
 
 ## License
 
