@@ -53,6 +53,29 @@ novadev status done "Completed auth flow for #42"
 novadev status blocked "Waiting on API spec for payments"
 ```
 
+### Gateway Mode
+
+Run a persistent polling loop that automatically claims tasks and solves them using an AI CLI:
+
+```bash
+# Start gateway with defaults (claude, poll every 5min, 1 task at a time)
+novadev gateway
+
+# Use a different AI provider
+novadev gateway --provider codex
+
+# Poll every 60s with up to 3 parallel tasks
+novadev gateway --interval 60 --concurrency 3
+```
+
+| Option                  | Default  | Description                         |
+| ----------------------- | -------- | ----------------------------------- |
+| `-i, --interval <s>`    | `300`    | Polling interval in seconds         |
+| `-c, --concurrency <n>` | `1`      | Max parallel tasks                  |
+| `-p, --provider <name>` | `claude` | AI CLI: `claude`, `codex`, `gemini` |
+
+The gateway reports the provider name with each status update so Nova knows which AI system processed the task. Press Ctrl+C to shut down gracefully (waits for active tasks to finish).
+
 ### MCP Mode
 
 NovaDev also runs as an MCP server (stdio transport), exposing the same capabilities as tools for AI agents:
