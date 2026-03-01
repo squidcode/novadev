@@ -10,6 +10,7 @@ vi.mock('node:child_process', () => ({
 vi.mock('../../lib/api.js', () => ({
   api: {
     claimTask: vi.fn().mockResolvedValue({}),
+    unclaimTask: vi.fn().mockResolvedValue({}),
     reportStatus: vi.fn().mockResolvedValue({}),
     tasks: vi.fn().mockResolvedValue([]),
     announce: vi.fn().mockResolvedValue({}),
@@ -86,6 +87,7 @@ beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
   mockApi.claimTask.mockResolvedValue({});
+  mockApi.unclaimTask.mockResolvedValue({});
   mockApi.reportStatus.mockResolvedValue(undefined as never);
   mockApi.heartbeat.mockResolvedValue({ ok: true });
   mockApi.logSession.mockResolvedValue({ ok: true });
@@ -162,7 +164,7 @@ describe('processTask with claude (streaming)', () => {
     );
   });
 
-  it('reports blocked on spawn error', async () => {
+  it('reports blocked and unclaims on spawn error', async () => {
     const { proc } = createMockProc();
     mockSpawn.mockReturnValue(proc);
 
@@ -172,6 +174,7 @@ describe('processTask with claude (streaming)', () => {
 
     await promise;
 
+    expect(mockApi.unclaimTask).toHaveBeenCalledWith('task-1', 'spawn ENOENT');
     expect(mockApi.reportStatus).toHaveBeenCalledWith('blocked', '[claude] spawn ENOENT', 'task-1');
   });
 
@@ -231,7 +234,7 @@ describe('processTask with non-claude provider', () => {
     expect(mockApi.reportStatus).toHaveBeenCalledWith('done', '[codex] Task completed', 'task-1');
   });
 
-  it('reports blocked status on CLI failure', async () => {
+  it('reports blocked status and unclaims on CLI failure', async () => {
     mockExecFile.mockImplementation((_cmd, _args, _opts, cb) => {
       (cb as (err: Error | null, stdout: string) => void)(new Error('CLI crashed'), '');
       return undefined as never;
@@ -239,6 +242,7 @@ describe('processTask with non-claude provider', () => {
 
     await processTask(fakeTask, 'codex');
 
+    expect(mockApi.unclaimTask).toHaveBeenCalledWith('task-1', 'CLI crashed');
     expect(mockApi.reportStatus).toHaveBeenCalledWith('blocked', '[codex] CLI crashed', 'task-1');
   });
 });

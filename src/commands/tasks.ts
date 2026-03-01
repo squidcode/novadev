@@ -55,3 +55,22 @@ tasksCommand
       process.exit(1);
     }
   });
+
+tasksCommand
+  .command('unclaim')
+  .description('Release a claimed task back to open')
+  .argument('<taskId>', 'Task ID to unclaim')
+  .argument('[reason]', 'Reason for unclaiming')
+  .action(async (taskId: string, reason?: string) => {
+    requireAuth();
+
+    try {
+      await api.unclaimTask(taskId, reason || 'Manual unclaim');
+      console.log(`Unclaimed task ${taskId}`);
+    } catch (err) {
+      if (err instanceof Error) {
+        console.error(`Failed to unclaim task: ${err.message}`);
+      }
+      process.exit(1);
+    }
+  });

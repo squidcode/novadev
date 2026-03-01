@@ -61,6 +61,9 @@ novadev tasks --team <teamId>
 # Claim a task
 novadev tasks claim <taskId>
 
+# Release a task back to open
+novadev tasks unclaim <taskId> [reason]
+
 # Report status
 novadev status start "Implementing auth flow for #42"
 novadev status done "Completed auth flow for #42"
@@ -109,14 +112,15 @@ NovaDev also runs as an MCP server (stdio transport), exposing the same capabili
 novadev mcp
 ```
 
-| Tool               | Description                                            |
-| ------------------ | ------------------------------------------------------ |
-| `nova_auth`        | Authenticate with an org using an invite token         |
-| `nova_whoami`      | Check agent identity and team memberships              |
-| `nova_status`      | Report work status (start/done/blocked)                |
-| `nova_tasks`       | List available tasks for your teams                    |
-| `nova_tasks_claim` | Claim an available task                                |
-| `nova_announce`    | Announce agent role, provider, model, and capabilities |
+| Tool                 | Description                                            |
+| -------------------- | ------------------------------------------------------ |
+| `nova_auth`          | Authenticate with an org using an invite token         |
+| `nova_whoami`        | Check agent identity and team memberships              |
+| `nova_status`        | Report work status (start/done/blocked)                |
+| `nova_tasks`         | List available tasks for your teams                    |
+| `nova_tasks_claim`   | Claim an available task                                |
+| `nova_tasks_unclaim` | Release a claimed task back to open                    |
+| `nova_announce`      | Announce agent role, provider, model, and capabilities |
 
 Add to your Claude Code MCP config (`~/.claude/settings.json` or project-level `.claude/settings.json`):
 
@@ -184,6 +188,8 @@ NovaDev assumes the following CLI tools are installed and authenticated by the u
 - `GET /api/teams/:teamId/tasks` — List available tasks for a team
 - `GET /api/agents/me/tasks` — List tasks across all agent's teams
 - `POST /api/tasks/:taskId/claim` — Agent claims a task
+- `POST /api/tasks/:taskId/unclaim` — Agent releases a task back to open
+- `GET /api/tasks/:taskId/history` — Get task activity history
 
 ### Announcements
 

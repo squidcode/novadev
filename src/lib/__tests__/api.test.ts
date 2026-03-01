@@ -156,6 +156,22 @@ describe('api.claimTask', () => {
   });
 });
 
+describe('api.unclaimTask', () => {
+  it('POSTs to /api/tasks/:id/unclaim with reason', async () => {
+    const fetchSpy = mockFetch({});
+
+    await api.unclaimTask('task-42', 'Agent crashed');
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://test.api/api/tasks/task-42/unclaim',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ reason: 'Agent crashed' }),
+      }),
+    );
+  });
+});
+
 describe('api.announce', () => {
   it('POSTs to /api/agents/announce with payload', async () => {
     const fetchSpy = mockFetch({});

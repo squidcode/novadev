@@ -111,7 +111,6 @@ export function runClaudeStreaming(
       '--allowedTools',
       'Bash,Read,Edit,Write,Glob,Grep',
       '--no-session-persistence',
-      '--no-input',
     ];
 
     const proc = spawn('claude', args, {
@@ -272,6 +271,7 @@ export async function processTask(
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    await api.unclaimTask(task.id, message).catch(() => {});
     await api.reportStatus('blocked', `[${provider}] ${message}`, task.id).catch(() => {});
     log(`${label} Error: ${message}`);
   }
@@ -334,11 +334,15 @@ export const gatewayCommand = new Command('gateway')
 
       let shutdownRequested = false;
       let activeTasks = 0;
+      const activeTaskIds = new Set<string>();
 
-      process.on('SIGINT', () => {
+      process.on('SIGINT', async () => {
         if (shutdownRequested) process.exit(1);
         shutdownRequested = true;
-        log(`Shutting down... waiting for ${activeTasks} active task(s)`);
+        log(`Shutting down... unclaiming ${activeTaskIds.size} active task(s)`);
+        for (const id of activeTaskIds) {
+          await api.unclaimTask(id, 'Agent gateway shut down').catch(() => {});
+        }
       });
 
       while (!shutdownRequested) {
@@ -363,8 +367,10 @@ export const gatewayCommand = new Command('gateway')
 
             for (const task of batch) {
               activeTasks++;
+              activeTaskIds.add(task.id);
               processTask(task, provider, { logging: opts.logging }).finally(() => {
                 activeTasks--;
+                activeTaskIds.delete(task.id);
               });
             }
           }

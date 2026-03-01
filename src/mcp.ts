@@ -163,6 +163,33 @@ export function createMcpServer(): McpServer {
   );
 
   server.registerTool(
+    'nova_tasks_unclaim',
+    {
+      title: 'Unclaim a task',
+      description:
+        'Release a claimed task back to open status. Use this when you cannot complete a task or need to hand it off.',
+      inputSchema: {
+        taskId: z.string().describe('The task ID to unclaim'),
+        reason: z.string().describe('Reason for unclaiming the task'),
+      },
+    },
+    async ({ taskId, reason }) => {
+      const cred = getActiveCredential();
+      if (!cred) {
+        return {
+          content: [{ type: 'text' as const, text: 'Not authenticated. Use nova_auth first.' }],
+          isError: true,
+        };
+      }
+
+      await api.unclaimTask(taskId, reason);
+      return {
+        content: [{ type: 'text' as const, text: `Unclaimed task ${taskId}: ${reason}` }],
+      };
+    },
+  );
+
+  server.registerTool(
     'nova_announce',
     {
       title: 'Announce agent capabilities',

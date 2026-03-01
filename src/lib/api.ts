@@ -103,6 +103,12 @@ export const api = {
     return request('POST', `/api/tasks/${taskId}/claim`);
   },
 
+  unclaimTask(taskId: string, reason: string) {
+    return request('POST', `/api/tasks/${taskId}/unclaim`, {
+      body: { reason },
+    });
+  },
+
   announce(payload: AnnouncePayload) {
     return request('POST', '/api/agents/announce', { body: payload });
   },
