@@ -120,4 +120,10 @@ export const api = {
       body: { taskId, lines, done },
     });
   },
+
+  reportUsage(taskId: string, resultEvent: Record<string, unknown>): Promise<{ ok: boolean }> {
+    return request('POST', '/api/agents/usage', {
+      body: { taskId, resultEvent },
+    });
+  },
 };

@@ -84,6 +84,11 @@ export interface SessionLogOptions {
   logging: boolean;
 }
 
+export interface ClaudeResult {
+  output: string;
+  resultEvent: Record<string, unknown> | null;
+}
+
 /**
  * Run Claude via spawn with stream-json output, accumulating full output
  * and streaming session logs to Nova.
@@ -92,7 +97,7 @@ export function runClaudeStreaming(
   prompt: string,
   taskId: string,
   opts: { cwd?: string; logging: boolean },
-): Promise<string> {
+): Promise<ClaudeResult> {
   return new Promise((resolve, reject) => {
     const args = [
       '-p',
@@ -115,6 +120,7 @@ export function runClaudeStreaming(
     });
 
     let fullOutput = '';
+    let resultEvent: Record<string, unknown> | null = null;
     const lineBuffer: Array<{ t: number; text: string }> = [];
     let lastFlush = Date.now();
     const FLUSH_LINES = 20;
@@ -134,18 +140,21 @@ export function runClaudeStreaming(
         const event = JSON.parse(line);
 
         // Extract text content from stream events
-        if (event.type === 'assistant' && event.message?.content) {
-          for (const block of event.message.content) {
-            if (block.type === 'text') {
-              fullOutput += block.text;
-              lineBuffer.push({ t: Date.now(), text: block.text });
+        if (event.type === 'assistant') {
+          if (event.message?.content) {
+            for (const block of event.message.content) {
+              if (block.type === 'text') {
+                fullOutput += block.text;
+                lineBuffer.push({ t: Date.now(), text: block.text });
+              }
             }
           }
         } else if (event.type === 'content_block_delta' && event.delta?.text) {
           fullOutput += event.delta.text;
           lineBuffer.push({ t: Date.now(), text: event.delta.text });
-        } else if (event.type === 'result' && event.result) {
-          // Final result message — capture if we haven't yet
+        } else if (event.type === 'result') {
+          // Capture the entire result event as-is for server-side extraction
+          resultEvent = event;
           if (typeof event.result === 'string' && !fullOutput) {
             fullOutput = event.result;
           }
@@ -170,7 +179,7 @@ export function runClaudeStreaming(
     proc.on('close', (code) => {
       flushLines(true);
       if (code === 0) {
-        resolve(fullOutput);
+        resolve({ output: fullOutput, resultEvent });
       } else {
         reject(new Error(stderrOutput || `claude exited with code ${code}`));
       }
@@ -220,7 +229,7 @@ export async function processTask(
 
       log(`${label} Running: claude (streaming)`);
       const startTime = Date.now();
-      const output = await runClaudeStreaming(prompt, task.id, {
+      const { output, resultEvent } = await runClaudeStreaming(prompt, task.id, {
         cwd,
         logging: opts.logging,
       });
@@ -228,6 +237,20 @@ export async function processTask(
 
       const summary = output.slice(0, 4096);
       await api.reportStatus('done', `[${provider}] ${summary}`, task.id);
+
+      // Report raw result event for server-side extraction
+      if (resultEvent) {
+        api.reportUsage(task.id, resultEvent).catch(() => {});
+        const u = resultEvent.usage as Record<string, number> | undefined;
+        const cost =
+          typeof resultEvent.total_cost_usd === 'number'
+            ? ` $${resultEvent.total_cost_usd.toFixed(4)}`
+            : '';
+        const turns =
+          typeof resultEvent.num_turns === 'number' ? ` ${resultEvent.num_turns}turns` : '';
+        log(`${label} Usage: ${u?.input_tokens ?? 0}in/${u?.output_tokens ?? 0}out${turns}${cost}`);
+      }
+
       log(`${label} Done (${elapsed}s)`);
     } else {
       // Legacy execFile path for other providers
