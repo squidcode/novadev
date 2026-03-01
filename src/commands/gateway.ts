@@ -67,13 +67,12 @@ export function parseRepo(description: string): string | null {
   return match ? match[1] : null;
 }
 
-/** Clone a repo and return the directory path. Throws on failure. */
+/** Clone a repo and return the directory path. Uses `gh repo clone` for auth. */
 export function cloneRepo(repo: string, cwd: string): Promise<string> {
-  const url = `https://github.com/${repo}.git`;
   const repoName = repo.split('/').pop()!;
   const dir = `${cwd}/${repoName}`;
   return new Promise((resolve, reject) => {
-    execFile('git', ['clone', '--depth', '1', url, dir], (err) => {
+    execFile('gh', ['repo', 'clone', repo, dir, '--', '--depth', '1'], (err) => {
       if (err) reject(new Error(`Failed to clone ${repo}: ${err.message}`));
       else resolve(dir);
     });
