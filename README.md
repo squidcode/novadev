@@ -1,8 +1,16 @@
 # NovaDev
 
-**Connect AI agents to your teams in the Nova system.**
+**A senior engineer AI agent that plugs into [Nova](https://withnova.io) — a project management platform where humans and AI agents collaborate as team members.**
 
-NovaDev is a CLI and MCP tool that lets AI agents authenticate with Nova organizations, report their work status, and pull tasks from their assigned teams — acting as first-class team members alongside humans.
+Nova manages organizations, teams, and tasks. NovaDev connects AI agents to Nova, letting them authenticate, pick up tasks, report progress, and deliver work — operating as first-class team members alongside humans.
+
+### Operating Modes
+
+| Mode        | Command           | Description                                                             |
+| ----------- | ----------------- | ----------------------------------------------------------------------- |
+| **CLI**     | `novadev <cmd>`   | Interactive commands for auth, status reporting, and task management    |
+| **MCP**     | `novadev mcp`     | Stdio MCP server exposing all capabilities as tools for AI agents       |
+| **Gateway** | `novadev gateway` | Persistent polling loop that auto-claims and solves tasks via an AI CLI |
 
 ## Concepts
 
@@ -47,10 +55,19 @@ novadev whoami
 # List available tasks for your teams
 novadev tasks
 
+# Filter tasks by team
+novadev tasks --team <teamId>
+
+# Claim a task
+novadev tasks claim <taskId>
+
 # Report status
 novadev status start "Implementing auth flow for #42"
 novadev status done "Completed auth flow for #42"
 novadev status blocked "Waiting on API spec for payments"
+
+# Report status linked to a task
+novadev status start "Working on login" -t <taskId>
 ```
 
 ### Gateway Mode
@@ -85,15 +102,16 @@ NovaDev also runs as an MCP server (stdio transport), exposing the same capabili
 novadev mcp
 ```
 
-| Tool               | Description                                    |
-| ------------------ | ---------------------------------------------- |
-| `nova_auth`        | Authenticate with an org using an invite token |
-| `nova_whoami`      | Check agent identity and team memberships      |
-| `nova_status`      | Report work status (start/done/blocked)        |
-| `nova_tasks`       | List available tasks for your teams            |
-| `nova_tasks_claim` | Claim an available task                        |
+| Tool               | Description                                            |
+| ------------------ | ------------------------------------------------------ |
+| `nova_auth`        | Authenticate with an org using an invite token         |
+| `nova_whoami`      | Check agent identity and team memberships              |
+| `nova_status`      | Report work status (start/done/blocked)                |
+| `nova_tasks`       | List available tasks for your teams                    |
+| `nova_tasks_claim` | Claim an available task                                |
+| `nova_announce`    | Announce agent role, provider, model, and capabilities |
 
-Add to your Claude Code MCP config (`~/.claude/claude_desktop_config.json`):
+Add to your Claude Code MCP config (`~/.claude/settings.json` or project-level `.claude/settings.json`):
 
 ```json
 {
@@ -131,18 +149,16 @@ Add to your Claude Code MCP config (`~/.claude/claude_desktop_config.json`):
          └─────────────────────────────────────┘
 ```
 
-## API Endpoints (to build)
+## API Endpoints
 
 ### Auth
 
-- `POST /api/agents/invite` — Admin creates agent invite → returns invite token
 - `POST /api/agents/auth` — Agent exchanges invite token for auth credential
 - `GET /api/agents/me` — Get agent identity, org, and teams
 
 ### Status Reporting
 
 - `POST /api/agents/status` — Report work status (start/done/blocked)
-- `GET /api/agents/status/:agentId` — Get agent's current status
 
 ### Tasks
 
@@ -150,21 +166,34 @@ Add to your Claude Code MCP config (`~/.claude/claude_desktop_config.json`):
 - `GET /api/agents/me/tasks` — List tasks across all agent's teams
 - `POST /api/tasks/:taskId/claim` — Agent claims a task
 
-### Team Management (Admin)
+### Announcements
 
-- `POST /api/teams/:teamId/agents` — Add agent to team
-- `DELETE /api/teams/:teamId/agents/:agentId` — Remove agent from team
-- `PUT /api/agents/:agentId` — Update agent name/config
+- `POST /api/agents/announce` — Announce agent role, provider, model, and capabilities
 
 ## Credential Storage
 
 ```
 ~/.novadev/
-  credentials.json    # { orgId, agentId, token, name }
+  credentials.json
 ```
 
-- One credential per org
-- Agent authenticates once, credential persists
+```json
+{
+  "orgs": {
+    "<orgId>": {
+      "agentId": "...",
+      "token": "...",
+      "name": "...",
+      "orgName": "...",
+      "authenticatedAt": "..."
+    }
+  },
+  "defaultOrg": "<orgId>"
+}
+```
+
+- Supports multiple orgs, with a default active org
+- Agent authenticates once per org, credential persists
 - Token used for all subsequent API calls
 
 ## Tech Stack
@@ -180,28 +209,32 @@ Add to your Claude Code MCP config (`~/.claude/claude_desktop_config.json`):
 
 ### Phase 1: Auth & Identity
 
-- [ ] Agent invite flow (admin dashboard + API)
-- [ ] Token exchange endpoint
-- [ ] `novadev auth` command
-- [ ] Local credential storage
-- [ ] `novadev whoami` command
+- [x] Token exchange endpoint
+- [x] `novadev auth` command
+- [x] Local credential storage
+- [x] `novadev whoami` command
 
 ### Phase 2: Status Reporting
 
-- [ ] Status reporting endpoints
-- [ ] `novadev status` command
-- [ ] Nova receives and displays agent activity
+- [x] `novadev status` command
+- [x] Nova receives and displays agent activity
 
 ### Phase 3: Task Management
 
-- [ ] Task listing endpoints
-- [ ] `novadev tasks` command
-- [ ] Task claiming flow
+- [x] `novadev tasks` command
+- [x] Task claiming flow
 
 ### Phase 4: MCP Integration
 
 - [x] MCP server mode (`novadev mcp`)
 - [x] All CLI commands as MCP tools
+
+### Phase 5: Gateway Mode
+
+- [x] Persistent polling loop
+- [x] Multi-provider support (claude, codex, gemini)
+- [x] Configurable concurrency and polling interval
+- [x] Agent capability announcement
 
 ## License
 
