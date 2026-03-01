@@ -1,0 +1,60 @@
+{
+  "name": "@squidcode/novadev",
+  "version": "0.1.0",
+  "description": "Connect AI agents to your teams in the Nova system",
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "novadev": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm run lint && npm run format:check",
+    "prepublishOnly": "npm run check && npm run build",
+    "prepare": "husky"
+  },
+  "keywords": [
+    "nova",
+    "ai-agents",
+    "cli",
+    "mcp",
+    "team-management"
+  ],
+  "author": "Squidcode <hello@squidcode.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/squidcode/novadev.git"
+  },
+  "homepage": "https://github.com/squidcode/novadev#readme",
+  "bugs": {
+    "url": "https://github.com/squidcode/novadev/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "commander": "^13.1.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.21.0",
+    "@types/node": "^22.13.0",
+    "eslint": "^9.21.0",
+    "eslint-config-prettier": "^10.0.1",
+    "husky": "^9.1.0",
+    "lint-staged": "^15.4.0",
+    "prettier": "^3.5.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.25.0"
+  }
+}
