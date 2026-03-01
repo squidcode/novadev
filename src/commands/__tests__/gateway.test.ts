@@ -84,6 +84,7 @@ function createMockProc() {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
   mockApi.claimTask.mockResolvedValue({});
   mockApi.reportStatus.mockResolvedValue(undefined as never);
   mockApi.heartbeat.mockResolvedValue({ ok: true });

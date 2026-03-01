@@ -111,6 +111,7 @@ export function runClaudeStreaming(
       '--allowedTools',
       'Bash,Read,Edit,Write,Glob,Grep',
       '--no-session-persistence',
+      '--no-input',
     ];
 
     const proc = spawn('claude', args, {
@@ -145,18 +146,24 @@ export function runClaudeStreaming(
               if (block.type === 'text') {
                 fullOutput += block.text;
                 lineBuffer.push({ t: Date.now(), text: block.text });
+                process.stdout.write(block.text);
+              } else if (block.type === 'tool_use') {
+                const toolLine = `\n[tool] ${block.name}\n`;
+                process.stdout.write(toolLine);
               }
             }
           }
         } else if (event.type === 'content_block_delta' && event.delta?.text) {
           fullOutput += event.delta.text;
           lineBuffer.push({ t: Date.now(), text: event.delta.text });
+          process.stdout.write(event.delta.text);
         } else if (event.type === 'result') {
           // Capture the entire result event as-is for server-side extraction
           resultEvent = event;
           if (typeof event.result === 'string' && !fullOutput) {
             fullOutput = event.result;
           }
+          process.stdout.write('\n');
         }
 
         // Periodic flush
