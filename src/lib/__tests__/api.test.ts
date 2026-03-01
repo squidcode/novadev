@@ -156,6 +156,20 @@ describe('api.claimTask', () => {
   });
 });
 
+describe('api.getTask', () => {
+  it('GETs /api/tasks/:id', async () => {
+    const fetchSpy = mockFetch({ id: 'task-42', assigneeId: 'agent-1' });
+
+    const task = await api.getTask('task-42');
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://test.api/api/tasks/task-42',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(task.assigneeId).toBe('agent-1');
+  });
+});
+
 describe('api.unclaimTask', () => {
   it('POSTs to /api/tasks/:id/unclaim with reason', async () => {
     const fetchSpy = mockFetch({});

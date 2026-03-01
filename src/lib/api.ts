@@ -88,10 +88,18 @@ export const api = {
     return request<AgentInfo>('GET', '/api/agents/me');
   },
 
-  reportStatus(type: 'start' | 'done' | 'blocked', message: string, taskId?: string) {
+  reportStatus(
+    type: 'start' | 'done' | 'blocked',
+    message: string,
+    taskId?: string,
+  ): Promise<{ ok: boolean; owned?: boolean }> {
     return request('POST', '/api/agents/status', {
       body: { type, message, taskId },
     });
+  },
+
+  getTask(taskId: string): Promise<Task> {
+    return request('GET', `/api/tasks/${taskId}`);
   },
 
   tasks(teamId?: string): Promise<Task[]> {
