@@ -15,6 +15,7 @@ vi.mock('../../lib/api.js', () => ({
     announce: vi.fn().mockResolvedValue({}),
     heartbeat: vi.fn().mockResolvedValue({}),
     logSession: vi.fn().mockResolvedValue({}),
+    reportUsage: vi.fn().mockResolvedValue({ ok: true }),
   },
 }));
 
@@ -82,10 +83,12 @@ function createMockProc() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.spyOn(console, 'log').mockImplementation(() => {});
   mockApi.claimTask.mockResolvedValue({});
   mockApi.reportStatus.mockResolvedValue(undefined as never);
   mockApi.heartbeat.mockResolvedValue({ ok: true });
   mockApi.logSession.mockResolvedValue({ ok: true });
+  mockApi.reportUsage.mockResolvedValue({ ok: true });
 });
 
 describe('provider validation', () => {

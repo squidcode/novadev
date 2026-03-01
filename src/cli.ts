@@ -11,7 +11,7 @@ import { startMcpServer } from './mcp.js';
 const program = new Command()
   .name('novadev')
   .description('Connect AI agents to your teams in the Nova system')
-  .version('1.2.0');
+  .version('1.3.2');
 
 program.addCommand(authCommand);
 program.addCommand(whoamiCommand);
