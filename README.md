@@ -85,11 +85,18 @@ novadev gateway --provider codex
 novadev gateway --interval 60 --concurrency 3
 ```
 
-| Option                  | Default  | Description                         |
-| ----------------------- | -------- | ----------------------------------- |
-| `-i, --interval <s>`    | `300`    | Polling interval in seconds         |
-| `-c, --concurrency <n>` | `1`      | Max parallel tasks                  |
-| `-p, --provider <name>` | `claude` | AI CLI: `claude`, `codex`, `gemini` |
+| Option                  | Default  | Description                           |
+| ----------------------- | -------- | ------------------------------------- |
+| `-i, --interval <s>`    | `300`    | Polling interval in seconds           |
+| `-c, --concurrency <n>` | `1`      | Max parallel tasks                    |
+| `-p, --provider <name>` | `claude` | AI CLI: `claude`, `codex`, `gemini`   |
+| `--no-logging`          | enabled  | Disable session log streaming to Nova |
+
+**Claude streaming:** When using the `claude` provider, the gateway uses Claude Code's streaming JSON output for real-time visibility — no output size limits, session logs streamed to Nova, and full project context via repo cloning.
+
+**Heartbeats:** Every poll cycle sends a heartbeat to Nova so the platform knows the agent is alive.
+
+**Repo cloning:** If a task description includes `Repository: org/repo`, the gateway clones the repo before running the AI CLI, giving it full project context.
 
 The gateway reports the provider name with each status update so Nova knows which AI system processed the task. Press Ctrl+C to shut down gracefully (waits for active tasks to finish).
 
@@ -123,6 +130,18 @@ Add to your Claude Code MCP config (`~/.claude/settings.json` or project-level `
   }
 }
 ```
+
+## External Tool Assumptions
+
+NovaDev assumes the following CLI tools are installed and authenticated by the user. It does not manage their credentials — it inherits whatever scope and permissions the user has configured:
+
+| Tool     | Purpose                                           |
+| -------- | ------------------------------------------------- |
+| `gh`     | GitHub CLI — used for PR creation, issue queries  |
+| `claude` | Claude Code CLI — primary AI provider for gateway |
+| `codex`  | OpenAI Codex CLI — alternative AI provider        |
+| `gemini` | Google Gemini CLI — alternative AI provider       |
+| `git`    | Version control — repo cloning, branch management |
 
 ## Architecture
 
@@ -169,6 +188,11 @@ Add to your Claude Code MCP config (`~/.claude/settings.json` or project-level `
 ### Announcements
 
 - `POST /api/agents/announce` — Announce agent role, provider, model, and capabilities
+
+### Heartbeat & Session Logging
+
+- `POST /api/agents/heartbeat` — Update agent last-seen timestamp
+- `POST /api/agents/sessions/log` — Stream session log lines to Nova
 
 ## Credential Storage
 
@@ -235,6 +259,14 @@ Add to your Claude Code MCP config (`~/.claude/settings.json` or project-level `
 - [x] Multi-provider support (claude, codex, gemini)
 - [x] Configurable concurrency and polling interval
 - [x] Agent capability announcement
+
+### Phase 6: Streaming & Observability
+
+- [x] Claude streaming output via `spawn` + NDJSON parsing
+- [x] Heartbeats on every poll cycle
+- [x] Session log streaming to Nova
+- [x] Repo cloning from structured task descriptions
+- [x] Structured task instructions (repo, ticket, PR reminder)
 
 ## License
 

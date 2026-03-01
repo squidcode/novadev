@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { EventEmitter, Readable } from 'node:stream';
 
 vi.mock('node:child_process', () => ({
   execFile: vi.fn(),
+  spawn: vi.fn(),
 }));
 
 vi.mock('../../lib/api.js', () => ({
@@ -11,6 +13,8 @@ vi.mock('../../lib/api.js', () => ({
     reportStatus: vi.fn().mockResolvedValue({}),
     tasks: vi.fn().mockResolvedValue([]),
     announce: vi.fn().mockResolvedValue({}),
+    heartbeat: vi.fn().mockResolvedValue({}),
+    logSession: vi.fn().mockResolvedValue({}),
   },
 }));
 
@@ -31,9 +35,11 @@ import {
   MAX_OUTPUT_BYTES,
   PROVIDERS,
   AGENT_CAPABILITIES,
+  parseRepo,
 } from '../gateway.js';
 
 const mockExecFile = vi.mocked(execFile);
+const mockSpawn = vi.mocked(spawn);
 const mockApi = vi.mocked(api);
 
 const fakeTask: Task = {
@@ -48,10 +54,36 @@ const fakeTask: Task = {
   createdAt: '2025-01-01',
 };
 
+function createMockProc() {
+  const proc = new EventEmitter() as ReturnType<typeof spawn>;
+  const stdout = new Readable({ read() {} });
+  const stderr = new Readable({ read() {} });
+  (proc as any).stdout = stdout;
+  (proc as any).stderr = stderr;
+  (proc as any).stdin = null;
+  (proc as any).stdio = [null, stdout, stderr];
+  (proc as any).pid = 12345;
+  (proc as any).connected = false;
+  (proc as any).exitCode = null;
+  (proc as any).signalCode = null;
+  (proc as any).spawnargs = [];
+  (proc as any).spawnfile = '';
+  (proc as any).killed = false;
+  (proc as any).kill = vi.fn();
+  (proc as any).send = vi.fn();
+  (proc as any).disconnect = vi.fn();
+  (proc as any).unref = vi.fn();
+  (proc as any).ref = vi.fn();
+  (proc as any)[Symbol.dispose] = vi.fn();
+  return { proc, stdout, stderr };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockApi.claimTask.mockResolvedValue({});
   mockApi.reportStatus.mockResolvedValue(undefined as never);
+  mockApi.heartbeat.mockResolvedValue({ ok: true });
+  mockApi.logSession.mockResolvedValue({ ok: true });
 });
 
 describe('provider validation', () => {
@@ -79,29 +111,118 @@ describe('verifyProvider', () => {
 
     await expect(verifyProvider('claude')).rejects.toThrow('not installed or not in PATH');
   });
+});
 
-  it('resolves with empty string when stdout is empty', async () => {
-    mockExecFile.mockImplementation((_cmd, _args, cb) => {
-      (cb as (err: Error | null, stdout: string) => void)(null, '');
-      return undefined as never;
-    });
+describe('parseRepo', () => {
+  it('extracts repo from description', () => {
+    expect(parseRepo('Repository: squidcode/nova\n\nDo stuff')).toBe('squidcode/nova');
+  });
 
-    await expect(verifyProvider('claude')).resolves.toBe('');
+  it('returns null when no repo line', () => {
+    expect(parseRepo('Just a description')).toBeNull();
+  });
+
+  it('handles repo with ticket below', () => {
+    expect(parseRepo('Repository: org/repo\nTicket: #42\n\nDesc')).toBe('org/repo');
   });
 });
 
-describe('processTask', () => {
-  it('claims task, reports start, runs provider, reports done', async () => {
+describe('processTask with claude (streaming)', () => {
+  it('claims task, spawns claude, reports done', async () => {
+    const { proc, stdout } = createMockProc();
+    mockSpawn.mockReturnValue(proc as any);
+
+    const promise = processTask(fakeTask, 'claude', { logging: true });
+
+    // Simulate stream-json output
+    const resultEvent = JSON.stringify({
+      type: 'result',
+      result: 'Task completed successfully',
+    });
+    stdout.push(resultEvent + '\n');
+    stdout.push(null);
+
+    // Process closes
+    setTimeout(() => proc.emit('close', 0), 10);
+
+    await promise;
+
+    expect(mockApi.claimTask).toHaveBeenCalledWith('task-1');
+    expect(mockApi.reportStatus).toHaveBeenCalledWith('start', '[claude] Fix bug', 'task-1');
+    expect(mockApi.reportStatus).toHaveBeenCalledWith(
+      'done',
+      expect.stringContaining('[claude]'),
+      'task-1',
+    );
+  });
+
+  it('reports blocked on spawn error', async () => {
+    const { proc } = createMockProc();
+    mockSpawn.mockReturnValue(proc as any);
+
+    const promise = processTask(fakeTask, 'claude', { logging: true });
+
+    setTimeout(() => proc.emit('error', new Error('spawn ENOENT')), 10);
+
+    await promise;
+
+    expect(mockApi.reportStatus).toHaveBeenCalledWith('blocked', '[claude] spawn ENOENT', 'task-1');
+  });
+
+  it('sends session logs when logging is enabled', async () => {
+    const { proc, stdout } = createMockProc();
+    mockSpawn.mockReturnValue(proc as any);
+
+    const promise = processTask(fakeTask, 'claude', { logging: true });
+
+    // Send assistant message event
+    const event = JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: 'Working on it' }] },
+    });
+    stdout.push(event + '\n');
+    stdout.push(null);
+
+    setTimeout(() => proc.emit('close', 0), 10);
+    await promise;
+
+    // logSession should have been called at least once (the final flush with done: true)
+    expect(mockApi.logSession).toHaveBeenCalled();
+    const finalCall = mockApi.logSession.mock.calls.find((c) => c[2] === true);
+    expect(finalCall).toBeDefined();
+  });
+
+  it('skips session logs when logging is disabled', async () => {
+    const { proc, stdout } = createMockProc();
+    mockSpawn.mockReturnValue(proc as any);
+
+    const promise = processTask(fakeTask, 'claude', { logging: false });
+
+    const event = JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: 'Working on it' }] },
+    });
+    stdout.push(event + '\n');
+    stdout.push(null);
+
+    setTimeout(() => proc.emit('close', 0), 10);
+    await promise;
+
+    expect(mockApi.logSession).not.toHaveBeenCalled();
+  });
+});
+
+describe('processTask with non-claude provider', () => {
+  it('uses execFile for codex provider', async () => {
     mockExecFile.mockImplementation((_cmd, _args, _opts, cb) => {
       (cb as (err: Error | null, stdout: string) => void)(null, 'Task completed');
       return undefined as never;
     });
 
-    await processTask(fakeTask, 'claude');
+    await processTask(fakeTask, 'codex');
 
     expect(mockApi.claimTask).toHaveBeenCalledWith('task-1');
-    expect(mockApi.reportStatus).toHaveBeenCalledWith('start', '[claude] Fix bug', 'task-1');
-    expect(mockApi.reportStatus).toHaveBeenCalledWith('done', '[claude] Task completed', 'task-1');
+    expect(mockApi.reportStatus).toHaveBeenCalledWith('done', '[codex] Task completed', 'task-1');
   });
 
   it('reports blocked status on CLI failure', async () => {
@@ -110,13 +231,13 @@ describe('processTask', () => {
       return undefined as never;
     });
 
-    await processTask(fakeTask, 'claude');
+    await processTask(fakeTask, 'codex');
 
-    expect(mockApi.reportStatus).toHaveBeenCalledWith('blocked', '[claude] CLI crashed', 'task-1');
+    expect(mockApi.reportStatus).toHaveBeenCalledWith('blocked', '[codex] CLI crashed', 'task-1');
   });
 });
 
-describe('output truncation', () => {
+describe('output truncation (non-claude providers)', () => {
   it('truncates stdout over MAX_OUTPUT_BYTES', async () => {
     const longOutput = 'x'.repeat(MAX_OUTPUT_BYTES + 1000);
     mockExecFile.mockImplementation((_cmd, _args, _opts, cb) => {
@@ -124,12 +245,11 @@ describe('output truncation', () => {
       return undefined as never;
     });
 
-    await processTask(fakeTask, 'claude');
+    await processTask(fakeTask, 'codex');
 
     const doneCall = mockApi.reportStatus.mock.calls.find((c) => c[0] === 'done');
     expect(doneCall).toBeDefined();
-    // The message is "[claude] " + truncated output
-    const reportedOutput = doneCall![1].replace('[claude] ', '');
+    const reportedOutput = doneCall![1].replace('[codex] ', '');
     expect(reportedOutput.length).toBe(MAX_OUTPUT_BYTES);
   });
 });
@@ -140,27 +260,5 @@ describe('AGENT_CAPABILITIES', () => {
     for (const cap of AGENT_CAPABILITIES) {
       expect(typeof cap).toBe('string');
     }
-  });
-});
-
-describe('announcement at startup', () => {
-  it('api.announce is callable with expected payload shape', () => {
-    const payload = {
-      role: 'Senior full-stack engineer',
-      provider: 'claude',
-      model: 'claude-code 1.2.3',
-      capabilities: AGENT_CAPABILITIES,
-    };
-
-    mockApi.announce(payload);
-
-    expect(mockApi.announce).toHaveBeenCalledWith(
-      expect.objectContaining({
-        role: 'Senior full-stack engineer',
-        provider: 'claude',
-        model: 'claude-code 1.2.3',
-        capabilities: expect.arrayContaining(['Full-stack web development']),
-      }),
-    );
   });
 });

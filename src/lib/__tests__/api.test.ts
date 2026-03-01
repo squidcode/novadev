@@ -177,3 +177,46 @@ describe('api.announce', () => {
     );
   });
 });
+
+describe('api.heartbeat', () => {
+  it('POSTs to /api/agents/heartbeat', async () => {
+    const fetchSpy = mockFetch({ ok: true });
+
+    await api.heartbeat();
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://test.api/api/agents/heartbeat',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+});
+
+describe('api.logSession', () => {
+  it('POSTs to /api/agents/sessions/log with lines and done', async () => {
+    const fetchSpy = mockFetch({ ok: true });
+    const lines = [{ t: 1000, text: 'hello' }];
+
+    await api.logSession('task-1', lines, true);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://test.api/api/agents/sessions/log',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ taskId: 'task-1', lines, done: true }),
+      }),
+    );
+  });
+
+  it('sends undefined taskId when not provided', async () => {
+    const fetchSpy = mockFetch({ ok: true });
+
+    await api.logSession(undefined, [{ t: 1000, text: 'x' }]);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://test.api/api/agents/sessions/log',
+      expect.objectContaining({
+        method: 'POST',
+      }),
+    );
+  });
+});

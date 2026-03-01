@@ -1,6 +1,6 @@
 {
   "name": "@squidcode/novadev",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Connect AI agents to your teams in the Nova system",
   "type": "commonjs",
   "main": "dist/index.js",

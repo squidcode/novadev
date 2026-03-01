@@ -106,4 +106,18 @@ export const api = {
   announce(payload: AnnouncePayload) {
     return request('POST', '/api/agents/announce', { body: payload });
   },
+
+  heartbeat(): Promise<{ ok: boolean }> {
+    return request('POST', '/api/agents/heartbeat');
+  },
+
+  logSession(
+    taskId: string | undefined,
+    lines: Array<{ t: number; text: string }>,
+    done?: boolean,
+  ): Promise<{ ok: boolean }> {
+    return request('POST', '/api/agents/sessions/log', {
+      body: { taskId, lines, done },
+    });
+  },
 };

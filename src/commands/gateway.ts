@@ -1,5 +1,6 @@
 import { Command } from 'commander';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
 import { api, AnnouncePayload, Task } from '../lib/api.js';
 import { getActiveCredential } from '../lib/credentials.js';
 
@@ -60,7 +61,133 @@ export function runProvider(provider: string, prompt: string): Promise<string> {
   });
 }
 
-export async function processTask(task: Task, provider: string): Promise<void> {
+/** Parse "Repository: org/repo" from task description */
+export function parseRepo(description: string): string | null {
+  const match = description.match(/^Repository:\s*(\S+)/m);
+  return match ? match[1] : null;
+}
+
+/** Clone a repo and return the directory path. Throws on failure. */
+export function cloneRepo(repo: string, cwd: string): Promise<string> {
+  const url = `https://github.com/${repo}.git`;
+  const repoName = repo.split('/').pop()!;
+  const dir = `${cwd}/${repoName}`;
+  return new Promise((resolve, reject) => {
+    execFile('git', ['clone', '--depth', '1', url, dir], (err) => {
+      if (err) reject(new Error(`Failed to clone ${repo}: ${err.message}`));
+      else resolve(dir);
+    });
+  });
+}
+
+export interface SessionLogOptions {
+  logging: boolean;
+}
+
+/**
+ * Run Claude via spawn with stream-json output, accumulating full output
+ * and streaming session logs to Nova.
+ */
+export function runClaudeStreaming(
+  prompt: string,
+  taskId: string,
+  opts: { cwd?: string; logging: boolean },
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const args = [
+      '-p',
+      prompt,
+      '--output-format',
+      'stream-json',
+      '--verbose',
+      '--max-turns',
+      '30',
+      '--permission-mode',
+      'bypassPermissions',
+      '--allowedTools',
+      'Bash,Read,Edit,Write,Glob,Grep',
+      '--no-session-persistence',
+    ];
+
+    const proc = spawn('claude', args, {
+      cwd: opts.cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let fullOutput = '';
+    const lineBuffer: Array<{ t: number; text: string }> = [];
+    let lastFlush = Date.now();
+    const FLUSH_LINES = 20;
+    const FLUSH_INTERVAL_MS = 5000;
+
+    function flushLines(done = false) {
+      if (!opts.logging) return;
+      if (lineBuffer.length === 0 && !done) return;
+      const toSend = lineBuffer.splice(0);
+      api.logSession(taskId, toSend, done).catch(() => {});
+    }
+
+    const rl = createInterface({ input: proc.stdout! });
+
+    rl.on('line', (line) => {
+      try {
+        const event = JSON.parse(line);
+
+        // Extract text content from stream events
+        if (event.type === 'assistant' && event.message?.content) {
+          for (const block of event.message.content) {
+            if (block.type === 'text') {
+              fullOutput += block.text;
+              lineBuffer.push({ t: Date.now(), text: block.text });
+            }
+          }
+        } else if (event.type === 'content_block_delta' && event.delta?.text) {
+          fullOutput += event.delta.text;
+          lineBuffer.push({ t: Date.now(), text: event.delta.text });
+        } else if (event.type === 'result' && event.result) {
+          // Final result message — capture if we haven't yet
+          if (typeof event.result === 'string' && !fullOutput) {
+            fullOutput = event.result;
+          }
+        }
+
+        // Periodic flush
+        const now = Date.now();
+        if (lineBuffer.length >= FLUSH_LINES || now - lastFlush >= FLUSH_INTERVAL_MS) {
+          flushLines();
+          lastFlush = now;
+        }
+      } catch {
+        // Not JSON or unknown format — skip
+      }
+    });
+
+    let stderrOutput = '';
+    proc.stderr?.on('data', (chunk: Buffer) => {
+      stderrOutput += chunk.toString();
+    });
+
+    proc.on('close', (code) => {
+      flushLines(true);
+      if (code === 0) {
+        resolve(fullOutput);
+      } else {
+        reject(new Error(stderrOutput || `claude exited with code ${code}`));
+      }
+    });
+
+    proc.on('error', (err) => {
+      flushLines(true);
+      reject(err);
+    });
+  });
+}
+
+export async function processTask(
+  task: Task,
+  provider: string,
+  opts: SessionLogOptions = { logging: true },
+): Promise<void> {
   const label = `[${task.id}]`;
 
   try {
@@ -70,15 +197,50 @@ export async function processTask(task: Task, provider: string): Promise<void> {
     await api.reportStatus('start', `[${provider}] ${task.title}`, task.id);
 
     const prompt = `Task: ${task.title}\n\n${task.description}`;
-    const { command, buildArgs } = PROVIDERS[provider];
-    log(`${label} Running: ${command} ${buildArgs('...').join(' ')}`);
 
-    const startTime = Date.now();
-    const output = await runProvider(provider, prompt);
-    const elapsed = Math.round((Date.now() - startTime) / 1000);
+    if (provider === 'claude') {
+      // Streaming path for Claude
+      let cwd: string | undefined;
 
-    await api.reportStatus('done', `[${provider}] ${output}`, task.id);
-    log(`${label} Done (${elapsed}s)`);
+      // Check if task description contains a repo to clone
+      const repo = parseRepo(task.description);
+      if (repo) {
+        const tmpDir = `/tmp/novadev-${task.id}`;
+        try {
+          const { mkdirSync } = await import('node:fs');
+          mkdirSync(tmpDir, { recursive: true });
+          cwd = await cloneRepo(repo, tmpDir);
+          log(`${label} Cloned ${repo} → ${cwd}`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          log(`${label} Clone failed: ${msg}`);
+          // Continue without repo — Claude can still work
+        }
+      }
+
+      log(`${label} Running: claude (streaming)`);
+      const startTime = Date.now();
+      const output = await runClaudeStreaming(prompt, task.id, {
+        cwd,
+        logging: opts.logging,
+      });
+      const elapsed = Math.round((Date.now() - startTime) / 1000);
+
+      const summary = output.slice(0, 4096);
+      await api.reportStatus('done', `[${provider}] ${summary}`, task.id);
+      log(`${label} Done (${elapsed}s)`);
+    } else {
+      // Legacy execFile path for other providers
+      const { command, buildArgs } = PROVIDERS[provider];
+      log(`${label} Running: ${command} ${buildArgs('...').join(' ')}`);
+
+      const startTime = Date.now();
+      const output = await runProvider(provider, prompt);
+      const elapsed = Math.round((Date.now() - startTime) / 1000);
+
+      await api.reportStatus('done', `[${provider}] ${output}`, task.id);
+      log(`${label} Done (${elapsed}s)`);
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await api.reportStatus('blocked', `[${provider}] ${message}`, task.id).catch(() => {});
@@ -95,93 +257,101 @@ export const gatewayCommand = new Command('gateway')
   .option('-i, --interval <seconds>', 'Polling interval in seconds', '300')
   .option('-c, --concurrency <n>', 'Max parallel tasks', '1')
   .option('-p, --provider <name>', `AI CLI to use: ${Object.keys(PROVIDERS).join(', ')}`, 'claude')
-  .action(async (opts: { interval: string; concurrency: string; provider: string }) => {
-    if (!getActiveCredential()) {
-      console.error('Not authenticated. Run: novadev auth <token>');
-      process.exit(1);
-    }
-
-    const provider = opts.provider;
-    if (!PROVIDERS[provider]) {
-      console.error(
-        `Unknown provider "${provider}". Available: ${Object.keys(PROVIDERS).join(', ')}`,
-      );
-      process.exit(1);
-    }
-
-    const interval = parseInt(opts.interval, 10) * 1000;
-    const concurrency = parseInt(opts.concurrency, 10);
-
-    let model = '';
-    try {
-      model = await verifyProvider(provider);
-    } catch (err) {
-      console.error(err instanceof Error ? err.message : String(err));
-      process.exit(1);
-    }
-
-    const payload: AnnouncePayload = {
-      role: 'Senior full-stack engineer',
-      provider,
-      model,
-      capabilities: AGENT_CAPABILITIES,
-    };
-
-    try {
-      await api.announce(payload);
-      log(`Announced to Nova: provider=${provider} model=${model || '(unknown)'}`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      log(`Announce failed (non-fatal): ${message}`);
-    }
-
-    log(
-      `Gateway started. Provider: ${provider}. Polling every ${opts.interval}s. Concurrency: ${concurrency}. Ctrl+C to stop.`,
-    );
-
-    let shutdownRequested = false;
-    let activeTasks = 0;
-
-    process.on('SIGINT', () => {
-      if (shutdownRequested) process.exit(1);
-      shutdownRequested = true;
-      log(`Shutting down... waiting for ${activeTasks} active task(s)`);
-    });
-
-    while (!shutdownRequested) {
-      log('Polling for tasks...');
-
-      try {
-        const tasks = await api.tasks();
-        const available = tasks.filter((t) => !t.assigneeId);
-
-        if (available.length === 0) {
-          log('No tasks available. Waiting...');
-        } else {
-          log(`Found ${available.length} task(s)`);
-
-          const slots = concurrency - activeTasks;
-          const batch = available.slice(0, slots);
-
-          for (const task of batch) {
-            activeTasks++;
-            processTask(task, provider).finally(() => {
-              activeTasks--;
-            });
-          }
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        log(`Poll error: ${message}`);
+  .option('--no-logging', 'Disable session log streaming')
+  .action(
+    async (opts: { interval: string; concurrency: string; provider: string; logging: boolean }) => {
+      if (!getActiveCredential()) {
+        console.error('Not authenticated. Run: novadev auth <token>');
+        process.exit(1);
       }
 
-      await sleep(interval);
-    }
+      const provider = opts.provider;
+      if (!PROVIDERS[provider]) {
+        console.error(
+          `Unknown provider "${provider}". Available: ${Object.keys(PROVIDERS).join(', ')}`,
+        );
+        process.exit(1);
+      }
 
-    // Wait for active tasks to finish
-    while (activeTasks > 0) {
-      await sleep(500);
-    }
+      const interval = parseInt(opts.interval, 10) * 1000;
+      const concurrency = parseInt(opts.concurrency, 10);
 
-    log('Gateway stopped.');
-  });
+      let model = '';
+      try {
+        model = await verifyProvider(provider);
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+
+      const payload: AnnouncePayload = {
+        role: 'Senior full-stack engineer',
+        provider,
+        model,
+        capabilities: AGENT_CAPABILITIES,
+      };
+
+      try {
+        await api.announce(payload);
+        log(`Announced to Nova: provider=${provider} model=${model || '(unknown)'}`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        log(`Announce failed (non-fatal): ${message}`);
+      }
+
+      log(
+        `Gateway started. Provider: ${provider}. Polling every ${opts.interval}s. Concurrency: ${concurrency}. Logging: ${opts.logging}. Ctrl+C to stop.`,
+      );
+
+      let shutdownRequested = false;
+      let activeTasks = 0;
+
+      process.on('SIGINT', () => {
+        if (shutdownRequested) process.exit(1);
+        shutdownRequested = true;
+        log(`Shutting down... waiting for ${activeTasks} active task(s)`);
+      });
+
+      while (!shutdownRequested) {
+        // Heartbeat — fire-and-forget
+        api.heartbeat().catch((err) => {
+          log(`Heartbeat failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+        });
+
+        log('Polling for tasks...');
+
+        try {
+          const tasks = await api.tasks();
+          const available = tasks.filter((t) => !t.assigneeId);
+
+          if (available.length === 0) {
+            log('No tasks available. Waiting...');
+          } else {
+            log(`Found ${available.length} task(s)`);
+
+            const slots = concurrency - activeTasks;
+            const batch = available.slice(0, slots);
+
+            for (const task of batch) {
+              activeTasks++;
+              processTask(task, provider, { logging: opts.logging }).finally(() => {
+                activeTasks--;
+              });
+            }
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          log(`Poll error: ${message}`);
+        }
+
+        await sleep(interval);
+      }
+
+      // Wait for active tasks to finish
+      while (activeTasks > 0) {
+        await sleep(500);
+      }
+
+      log('Gateway stopped.');
+    },
+  );
