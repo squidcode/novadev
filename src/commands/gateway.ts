@@ -1,11 +1,14 @@
 import { Command } from 'commander';
 import { execFile } from 'node:child_process';
-import { api, Task } from '../lib/api.js';
+import { api, AnnouncePayload, Task } from '../lib/api.js';
 import { getActiveCredential } from '../lib/credentials.js';
 
-const MAX_OUTPUT_BYTES = 4096;
+export const MAX_OUTPUT_BYTES = 4096;
 
-const PROVIDERS: Record<string, { command: string; buildArgs: (prompt: string) => string[] }> = {
+export const PROVIDERS: Record<
+  string,
+  { command: string; buildArgs: (prompt: string) => string[] }
+> = {
   claude: { command: 'claude', buildArgs: (p) => ['-p', p] },
   codex: { command: 'codex', buildArgs: (p) => ['-q', p] },
   gemini: { command: 'gemini', buildArgs: (p) => ['-p', p] },
@@ -19,20 +22,31 @@ function log(msg: string): void {
   console.log(`[${timestamp()}] ${msg}`);
 }
 
-function verifyProvider(provider: string): Promise<void> {
+export const AGENT_CAPABILITIES = [
+  'Proficient in all programming languages',
+  'Full-stack web development',
+  'API design and implementation',
+  'Database design and query optimization',
+  'Code review and refactoring',
+  'Bug diagnosis and resolution',
+  'Testing and CI/CD pipelines',
+  'System architecture and infrastructure',
+];
+
+export function verifyProvider(provider: string): Promise<string> {
   const { command } = PROVIDERS[provider];
   return new Promise((resolve, reject) => {
-    execFile(command, ['--version'], (err) => {
+    execFile(command, ['--version'], (err, stdout) => {
       if (err) {
         reject(new Error(`"${command}" is not installed or not in PATH`));
       } else {
-        resolve();
+        resolve((stdout ?? '').trim());
       }
     });
   });
 }
 
-function runProvider(provider: string, prompt: string): Promise<string> {
+export function runProvider(provider: string, prompt: string): Promise<string> {
   const { command, buildArgs } = PROVIDERS[provider];
   const args = buildArgs(prompt);
   return new Promise((resolve, reject) => {
@@ -46,7 +60,7 @@ function runProvider(provider: string, prompt: string): Promise<string> {
   });
 }
 
-async function processTask(task: Task, provider: string): Promise<void> {
+export async function processTask(task: Task, provider: string): Promise<void> {
   const label = `[${task.id}]`;
 
   try {
@@ -98,11 +112,27 @@ export const gatewayCommand = new Command('gateway')
     const interval = parseInt(opts.interval, 10) * 1000;
     const concurrency = parseInt(opts.concurrency, 10);
 
+    let model = '';
     try {
-      await verifyProvider(provider);
+      model = await verifyProvider(provider);
     } catch (err) {
       console.error(err instanceof Error ? err.message : String(err));
       process.exit(1);
+    }
+
+    const payload: AnnouncePayload = {
+      role: 'Senior full-stack engineer',
+      provider,
+      model,
+      capabilities: AGENT_CAPABILITIES,
+    };
+
+    try {
+      await api.announce(payload);
+      log(`Announced to Nova: provider=${provider} model=${model || '(unknown)'}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log(`Announce failed (non-fatal): ${message}`);
     }
 
     log(

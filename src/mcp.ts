@@ -162,6 +162,55 @@ export function createMcpServer(): McpServer {
     },
   );
 
+  server.registerTool(
+    'nova_announce',
+    {
+      title: 'Announce agent capabilities',
+      description:
+        "Announce this agent's role, provider, model, and capabilities to Nova so the PM can make informed task assignments.",
+      inputSchema: {
+        role: z.string().default('Senior full-stack engineer').describe('Agent role description'),
+        provider: z
+          .string()
+          .default('claude')
+          .describe('AI provider name (e.g. claude, codex, gemini)'),
+        model: z.string().default('').describe('Model version string (empty if unknown)'),
+        capabilities: z
+          .array(z.string())
+          .default([
+            'Proficient in all programming languages',
+            'Full-stack web development',
+            'API design and implementation',
+            'Database design and query optimization',
+            'Code review and refactoring',
+            'Bug diagnosis and resolution',
+            'Testing and CI/CD pipelines',
+            'System architecture and infrastructure',
+          ])
+          .describe('List of skill areas'),
+      },
+    },
+    async ({ role, provider, model, capabilities }) => {
+      const cred = getActiveCredential();
+      if (!cred) {
+        return {
+          content: [{ type: 'text' as const, text: 'Not authenticated. Use nova_auth first.' }],
+          isError: true,
+        };
+      }
+
+      await api.announce({ role, provider, model, capabilities });
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Announced: role="${role}" provider=${provider} model=${model || '(unknown)'} capabilities=${capabilities.length}`,
+          },
+        ],
+      };
+    },
+  );
+
   return server;
 }
 

@@ -70,6 +70,13 @@ export interface Task {
   createdAt: string;
 }
 
+export interface AnnouncePayload {
+  role: string;
+  provider: string;
+  model: string;
+  capabilities: string[];
+}
+
 export const api = {
   auth(inviteToken: string): Promise<AuthResponse> {
     return request<AuthResponse>('POST', '/api/agents/auth', {
@@ -94,5 +101,9 @@ export const api = {
 
   claimTask(taskId: string) {
     return request('POST', `/api/tasks/${taskId}/claim`);
+  },
+
+  announce(payload: AnnouncePayload) {
+    return request('POST', '/api/agents/announce', { body: payload });
   },
 };
