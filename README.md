@@ -187,4 +187,4 @@ MIT
 
 ---
 
-_Part of the [Nova](https://github.com/squidcode/nova) ecosystem by [Squidcode](https://squidcode.com)_
+_Part of the [Nova](https://withnova.io) ecosystem by [Squidcode](https://squidcode.com)_
