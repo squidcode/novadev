@@ -47,6 +47,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
     "commander": "^13.1.0",
+    "pusher-js": "^8.4.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {

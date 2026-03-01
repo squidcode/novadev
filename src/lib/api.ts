@@ -140,4 +140,10 @@ export const api = {
       body: { taskId, resultEvent },
     });
   },
+
+  pusherAuth(socketId: string, channelName: string): Promise<unknown> {
+    return request('POST', '/api/agents/pusher/auth', {
+      body: { socket_id: socketId, channel_name: channelName },
+    });
+  },
 };

@@ -4,6 +4,7 @@ import { createInterface } from 'node:readline';
 import { existsSync } from 'node:fs';
 import { api, AnnouncePayload, Task } from '../lib/api.js';
 import { getActiveCredential } from '../lib/credentials.js';
+import { connectPusher, PusherClient } from '../lib/pusher-client.js';
 
 export const MAX_OUTPUT_BYTES = 4096;
 export const OWNERSHIP_POLL_MS = 30_000;
@@ -125,6 +126,8 @@ export class TaskOwnershipLostError extends Error {
 
 export interface SessionLogOptions {
   logging: boolean;
+  signal?: AbortSignal;
+  skipOwnershipPolling?: boolean;
 }
 
 export interface ClaudeResult {
@@ -338,19 +341,24 @@ export async function processTask(
       log(`${label} Running: claude (streaming)`);
       const startTime = Date.now();
 
-      // Set up ownership polling with abort controller
-      const ac = new AbortController();
-      const stopPolling = startOwnershipPolling(task.id, () => {
-        log(`${label} Ownership lost — aborting Claude process`);
-        ac.abort();
-      });
+      // Use external signal from gateway (for Pusher) or create a local one
+      const ac = opts.signal ? null : new AbortController();
+      const signal = opts.signal ?? ac!.signal;
+
+      // Start ownership polling unless Pusher handles it
+      const stopPolling = opts.skipOwnershipPolling
+        ? () => {}
+        : startOwnershipPolling(task.id, () => {
+            log(`${label} Ownership lost — aborting Claude process`);
+            ac?.abort();
+          });
 
       let result: ClaudeResult;
       try {
         result = await runClaudeStreaming(prompt, task.id, {
           cwd,
           logging: opts.logging,
-          signal: ac.signal,
+          signal,
         });
       } finally {
         stopPolling();
@@ -414,6 +422,19 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Interruptible sleep — call the returned `wake` function to resolve early. */
+function interruptibleSleep(ms: number): { promise: Promise<void>; wake: () => void } {
+  let wake: () => void;
+  const promise = new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    wake = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+  });
+  return { promise, wake: wake! };
+}
+
 export const gatewayCommand = new Command('gateway')
   .description('Run a persistent polling loop that claims and solves tasks via an AI CLI')
   .option('-i, --interval <seconds>', 'Polling interval in seconds', '300')
@@ -435,8 +456,9 @@ export const gatewayCommand = new Command('gateway')
         process.exit(1);
       }
 
-      const interval = parseInt(opts.interval, 10) * 1000;
+      const baseInterval = parseInt(opts.interval, 10) * 1000;
       const concurrency = parseInt(opts.concurrency, 10);
+      const PUSHER_SAFETY_INTERVAL = 10 * 60 * 1000; // 10 min safety poll when Pusher connected
 
       let model = '';
       try {
@@ -461,8 +483,43 @@ export const gatewayCommand = new Command('gateway')
         log(`Announce failed (non-fatal): ${message}`);
       }
 
+      // --- Pusher setup ---
+      const pusherKey = process.env.PUSHER_KEY;
+      const pusherCluster = process.env.PUSHER_CLUSTER;
+      let pusher: PusherClient | null = null;
+      let triggerPoll: (() => void) | null = null;
+      // Track abort functions for active tasks so Pusher events can abort them
+      const taskAbortFns = new Map<string, () => void>();
+
+      if (pusherKey && pusherCluster) {
+        try {
+          pusher = await connectPusher(pusherKey, pusherCluster);
+          if (pusher) {
+            log('Pusher connected — real-time events enabled');
+            pusher.onTaskAvailable((data) => {
+              log(`[pusher] Task available: "${data.title}" (${data.taskId})`);
+              triggerPoll?.();
+            });
+            pusher.onOwnershipLost((data) => {
+              log(`[pusher] Ownership lost: ${data.taskId}`);
+              const abort = taskAbortFns.get(data.taskId);
+              if (abort) abort();
+            });
+          } else {
+            log('Pusher connection failed — polling-only mode');
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          log(`Pusher setup failed (${message}) — polling-only mode`);
+        }
+      } else {
+        log('Pusher not configured — polling-only mode');
+      }
+
+      const pusherConnected = () => pusher?.isConnected() ?? false;
+
       log(
-        `Gateway started. Provider: ${provider}. Polling every ${opts.interval}s. Concurrency: ${concurrency}. Logging: ${opts.logging}. Ctrl+C to stop.`,
+        `Gateway started. Provider: ${provider}. Poll interval: ${pusherConnected() ? '10min (safety)' : opts.interval + 's'}. Concurrency: ${concurrency}. Logging: ${opts.logging}. Ctrl+C to stop.`,
       );
 
       let shutdownRequested = false;
@@ -473,6 +530,7 @@ export const gatewayCommand = new Command('gateway')
         if (shutdownRequested) process.exit(1);
         shutdownRequested = true;
         log(`Shutting down... unclaiming ${activeTaskIds.size} active task(s)`);
+        pusher?.disconnect();
         for (const id of activeTaskIds) {
           await api.unclaimTask(id, 'Agent gateway shut down').catch(() => {});
         }
@@ -483,6 +541,31 @@ export const gatewayCommand = new Command('gateway')
         api.heartbeat().catch((err) => {
           log(`Heartbeat failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
         });
+
+        // Reconnect Pusher if it dropped
+        if (pusher && !pusher.isConnected() && pusherKey && pusherCluster) {
+          log('Pusher disconnected — attempting reconnect...');
+          try {
+            const reconnected = await connectPusher(pusherKey, pusherCluster);
+            if (reconnected) {
+              pusher = reconnected;
+              pusher.onTaskAvailable((data) => {
+                log(`[pusher] Task available: "${data.title}" (${data.taskId})`);
+                triggerPoll?.();
+              });
+              pusher.onOwnershipLost((data) => {
+                log(`[pusher] Ownership lost: ${data.taskId}`);
+                const abort = taskAbortFns.get(data.taskId);
+                if (abort) abort();
+              });
+              log('Pusher reconnected');
+            } else {
+              log('Pusher reconnect failed — continuing with polling');
+            }
+          } catch {
+            log('Pusher reconnect failed — continuing with polling');
+          }
+        }
 
         log('Polling for tasks...');
 
@@ -501,9 +584,19 @@ export const gatewayCommand = new Command('gateway')
             for (const task of batch) {
               activeTasks++;
               activeTaskIds.add(task.id);
-              processTask(task, provider, { logging: opts.logging }).finally(() => {
+
+              // Set up abort tracking for Pusher ownership-lost events
+              const ac = new AbortController();
+              taskAbortFns.set(task.id, () => ac.abort());
+
+              processTask(task, provider, {
+                logging: opts.logging,
+                signal: ac.signal,
+                skipOwnershipPolling: pusherConnected(),
+              }).finally(() => {
                 activeTasks--;
                 activeTaskIds.delete(task.id);
+                taskAbortFns.delete(task.id);
               });
             }
           }
@@ -512,7 +605,11 @@ export const gatewayCommand = new Command('gateway')
           log(`Poll error: ${message}`);
         }
 
-        await sleep(interval);
+        const pollInterval = pusherConnected() ? PUSHER_SAFETY_INTERVAL : baseInterval;
+        const sleeper = interruptibleSleep(pollInterval);
+        triggerPoll = sleeper.wake;
+        await sleeper.promise;
+        triggerPoll = null;
       }
 
       // Wait for active tasks to finish
